@@ -5,6 +5,10 @@ import { defineConfig, loadEnv } from 'vite'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = env.CCC_BACKEND_URL || 'http://127.0.0.1:8000'
+  const allowedHosts = (env.CCC_ALLOWED_HOSTS || 'clash.kituin.fun')
+    .split(',')
+    .map((host) => host.trim())
+    .filter(Boolean)
   const proxy = {
     '/api': { target, changeOrigin: false },
     '/sub': { target, changeOrigin: false },
@@ -15,7 +19,7 @@ export default defineConfig(({ mode }) => {
   }
   return {
     plugins: [react()],
-    server: { port: 5173, proxy },
-    preview: { port: 4173, proxy },
+    server: { port: 5173, allowedHosts, proxy },
+    preview: { port: 4173, allowedHosts, proxy },
   }
 })

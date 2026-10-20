@@ -45,7 +45,7 @@ uv run clash-config-center --data-dir 'D:\ClashData' serve --host 127.0.0.1 --po
 | `CCC_PORT` | `8000` | HTTP 端口 |
 | `CCC_DATA_DIR` | `backend/data` | SQLite 数据目录 |
 | `CCC_CORS_ORIGINS` | `[]` | 允许的前端 Origin，JSON 数组，例如 `["http://localhost:5173"]` |
-| `CCC_PUBLIC_BASE_URL` | 请求自身的 Origin | 创建出口时返回链接使用的对外根地址 |
+| `CCC_PUBLIC_BASE_URL` | 请求自身的 Origin | 创建出口、查看凭据和更换 Token 时返回链接使用的对外根地址，例如 `https://clash.kituin.fun`；修改后需重启后端 |
 | `CCC_FETCH_TIMEOUT_SECONDS` | `30` | HTTP 连接及读取超时，单位秒 |
 | `CCC_FETCH_MAX_BYTES` | `10485760` | 上游解压后响应大小上限；解析器另设 10 MiB 上限 |
 | `CCC_SCHEDULER_INTERVAL_SECONDS` | `60` | 检查到期来源的间隔 |
@@ -54,6 +54,8 @@ uv run clash-config-center --data-dir 'D:\ClashData' serve --host 127.0.0.1 --po
 SQLite 使用 WAL 和外键约束。来源、节点、凭据摘要及最近成功结果均存入 `config-center.sqlite3`。迁移文件位于 Python 包中，启动时执行 `upgrade head`。备份时先停服务，再复制完整数据目录；节点密码和上游 URL 本身属于配置数据，会保存在数据库中。
 
 CLI 禁用包含查询串的 HTTP 访问日志；上游网络错误仅记录错误类别，不记录订阅 URL、请求体或节点密码。管理 Token 的首次显示与显式重置显示是例外。
+
+使用 Nginx 反向代理时，建议在 `.env` 中显式配置 `CCC_PUBLIC_BASE_URL=https://clash.kituin.fun`（替换为实际对外地址）。重启后端并重新打开出口详情后，已有出口也会返回新地址，无需重建或更换 Token。未配置时使用请求地址；若 Nginx 把 Host 改成 `localhost`，订阅链接也会包含 `localhost`。完整代理示例和 Vite 域名允许列表配置见[前端部署说明](../frontend/README.md#nginx-反向代理)。
 
 ## 认证和接口约定
 
