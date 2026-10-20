@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, errorMessage } from '../api/client'
 import type { ExportView, Preview, SubscriptionCredentials } from '../api/types'
 import { CredentialsModal, RotateTokenDialog } from '../components/Credentials'
+import { SubscriptionLink } from '../components/SubscriptionLink'
 import {
   IconArrowLeft,
   IconEdit,
@@ -272,24 +273,16 @@ export default function ExportDetail() {
               <div className="card">
                 <div className="card-header">
                   <h3 className="card-title">订阅链接</h3>
-                  <p className="card-desc">可随时复制订阅链接或 Token；如怀疑泄露，请更换 Token。</p>
+                  <p className="card-desc">支持 URL、二维码和 Clash 直接导入；如怀疑泄露，请更换 Token。</p>
                 </div>
                 <div className="card-body stack" style={{ gap: 12 }}>
                   {creds.data ? (
                     <>
-                      <div className="field">
-                        <label className="label">订阅链接</label>
-                        <SecretField
-                          value={creds.data.subscription_url}
-                          masked={creds.data.subscription_url.replace(
-                            /token=[^&]*/,
-                            'token=••••••••••••',
-                          )}
-                          revealed={revealed}
-                          onToggle={() => setRevealed((v) => !v)}
-                          copyLabel="复制订阅链接"
-                        />
-                      </div>
+                      <SubscriptionLink
+                        key={creds.data.subscription_url}
+                        url={creds.data.subscription_url}
+                        name={e.name}
+                      />
                       <div className="field">
                         <label className="label">订阅 Token</label>
                         <SecretField
@@ -458,7 +451,12 @@ export default function ExportDetail() {
           toast.success('Token 已更换')
         }}
       />
-      <CredentialsModal credentials={credentials} title="新的订阅凭据" onClose={() => setCredentials(undefined)} />
+      <CredentialsModal
+        credentials={credentials}
+        exportName={e?.name ?? 'ClashConfigCenter'}
+        title="新的订阅凭据"
+        onClose={() => setCredentials(undefined)}
+      />
       <ConfirmDialog
         open={deleting}
         onClose={() => setDeleting(false)}

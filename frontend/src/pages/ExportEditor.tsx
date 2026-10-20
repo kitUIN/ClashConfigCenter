@@ -567,6 +567,7 @@ export default function ExportEditor() {
       </div>
       <CredentialsModal
         credentials={credentials}
+        exportName={draft.name.trim()}
         title="出口已创建"
         onClose={() => {
           const target = credentials?.id

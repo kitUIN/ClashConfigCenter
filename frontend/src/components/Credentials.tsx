@@ -2,15 +2,18 @@ import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { SubscriptionCredentials } from '../api/types'
 import { IconKey } from './icons'
+import { SubscriptionLink } from './SubscriptionLink'
 import { Button, CopyField, ErrorNote, Modal, Note } from './ui'
 
 /** 展示订阅凭据；之后也可在出口详情页再次查看和复制。 */
 export function CredentialsModal({
   credentials,
+  exportName,
   onClose,
   title = '订阅已就绪',
 }: {
   credentials?: SubscriptionCredentials
+  exportName: string
   onClose: () => void
   title?: string
 }) {
@@ -31,10 +34,14 @@ export function CredentialsModal({
       }
     >
       <Note type="info">之后可随时在出口详情页的「订阅链接」中再次复制。请勿将链接分享给他人。</Note>
-      <div className="field">
-        <label className="label">订阅链接</label>
-        <CopyField value={credentials?.subscription_url ?? ''} />
-      </div>
+      {credentials && (
+        <SubscriptionLink
+          key={credentials.subscription_url}
+          url={credentials.subscription_url}
+          name={exportName}
+          initiallyRevealed
+        />
+      )}
       <div className="field">
         <label className="label">订阅 Token</label>
         <CopyField value={credentials?.token ?? ''} />

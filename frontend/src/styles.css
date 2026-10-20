@@ -1105,6 +1105,46 @@ a.list-item:hover,
   scrollbar-width: none;
 }
 
+.subscription-link {
+  min-width: 0;
+}
+
+.subscription-modes {
+  align-self: flex-start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.subscription-modes button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.subscription-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.subscription-qr img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+}
+
+.subscription-qr-loading {
+  display: grid;
+  place-items: center;
+  width: 288px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+}
+
 /* ---------- Modal ---------- */
 .overlay {
   position: fixed;
