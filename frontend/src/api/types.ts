@@ -10,6 +10,7 @@ export interface Source {
   kind: SourceKind
   url: string | null
   refresh_interval_seconds: number
+  ignored_node_names: string[]
   created_at: string
   last_attempt_at: string | null
   last_success_at: string | null
@@ -18,6 +19,7 @@ export interface Source {
   using_stale_snapshot: boolean
   status: SourceStatus
   node_count: number
+  ignored_node_count: number
   has_snapshot: boolean
 }
 
@@ -26,12 +28,14 @@ export interface SourceCreate {
   kind: SourceKind
   url?: string
   refresh_interval_seconds?: number
+  ignored_node_names?: string[]
 }
 
 export interface SourcePatch {
   name?: string
   url?: string
   refresh_interval_seconds?: number
+  ignored_node_names?: string[]
 }
 
 export type ProxyConfig = Record<string, unknown> & {
@@ -57,6 +61,7 @@ export interface ExportConfig {
   template_yaml?: string | null
   base_source_id?: string | null
   injection: Injection
+  prefix_source_name?: boolean
   target_groups: string[]
 }
 

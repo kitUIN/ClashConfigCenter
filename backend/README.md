@@ -98,6 +98,10 @@ URL 来源创建请求：
 
 来源响应包含 `id`、配置字段、`node_count`、`has_snapshot`、`status`、`last_attempt_at`、`last_success_at`、`next_refresh_at`、`last_error`、`using_stale_snapshot`。时间为带 UTC 时区的 ISO 8601 字符串。`status` 为 `pending`、`ready` 或 `error`。
 
+URL 和自定义来源均支持 `ignored_node_names`，默认 `[]`。创建或 PATCH 来源时传入原节点名称列表，例如 `{"ignored_node_names":["剩余流量","香港01"]}`，按完整名称精确匹配，同名节点全部忽略；传 `[]` 恢复全部节点。设置对所有引用该来源的出口生效，修改后自动重建，订阅刷新后仍然保留。节点列表和原始快照保留全部节点，`node_count` 为总数，`ignored_node_count` 为当前快照中被忽略的数量。
+
+继承模式会从策略组中移除被忽略节点，过滤后为空的组使用 `empty-fallback`（默认 `COMPATIBLE`）；若 `empty-fallback` 本身被忽略，则改用 `COMPATIBLE`。规则、子规则、DNS、规则源或其他节点的拨号链仍直接依赖已忽略节点时，编译会报错，请调整引用或恢复该节点。过滤后整个出口没有节点也会报错。与其他来源变更一致，重建失败时保留最近成功的订阅，因此旧订阅可能仍含已忽略节点；可通过出口 `last_error` 和 `using_stale_snapshot` 查看状态。
+
 新增/替换节点请求必须在 `config`、`yaml`、`uri` 三项中选择一项：
 
 ```json
@@ -160,6 +164,7 @@ URL 来源创建请求：
   "source_ids": ["来源A的ID", "来源B的ID", "自定义来源ID"],
   "mode": "template",
   "injection": "grouped",
+  "prefix_source_name": true,
   "target_groups": ["代理选择"]
 }
 ```
@@ -181,7 +186,7 @@ URL 来源创建请求：
 
 `base_source_id` 必须是所选 URL 来源之一，且它的快照具有完整策略组和规则。继承模式不传 `template_yaml`。`injection` 可选 `grouped`（按来源生成选择组）或 `direct`（逐个追加节点）。允许多个目标组，目标组必须已存在。
 
-`source_ids` 数组顺序决定输出顺序。节点按 `[来源名称] 原节点名` 命名；冲突名称依次追加 ` #2`、` #3`，默认不去重。基础配置中的节点引用会同步调整。继承模式会将 `include-all`/`include-all-proxies` 及名称筛选固定为基础来源当前的节点列表，再注入其他来源，避免前缀改变筛选结果或无意扩大其他上游分组。不能转换或执行超时的正则表达式会明确报错。当前支持 `select`、`url-test`、`fallback`、`load-balance` 策略组。
+`source_ids` 数组顺序决定输出顺序。`prefix_source_name` 控制节点名称的来源前缀，默认 `true`，节点按 `[来源名称] 原节点名` 命名；设为 `false` 则使用原节点名。两种设置下，冲突名称均依次追加 ` #2`、` #3`，默认不去重。此开关支持创建、PATCH 和预览，不改变「来源 · 名称」策略组的名称。已有数据库启动时自动迁移，旧出口保持开启前缀。基础配置中的节点引用会同步调整。继承模式会将 `include-all`/`include-all-proxies` 及名称筛选固定为基础来源当前未忽略的节点列表，再注入其他来源，避免前缀改变筛选结果或无意扩大其他上游分组。不能转换或执行超时的正则表达式会明确报错。当前支持 `select`、`url-test`、`fallback`、`load-balance` 策略组。
 
 保存前必须通过编译和引用校验。预览与创建使用相同的出口配置字段，但预览不接受 `token`，返回 `yaml`、`digest`、`node_count`、`group_count`。修改出口采用部分更新；切换 `mode` 时自动清除旧模式的互斥设置，但需要同时填写正确的新基础来源或目标组。
 

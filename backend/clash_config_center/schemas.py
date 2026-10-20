@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -20,11 +20,17 @@ class InputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+IgnoredNodeNames = list[Annotated[str, Field(min_length=1)]]
+
+
 class SourceCreate(InputModel):
     name: str = Field(min_length=1, max_length=200)
     kind: Literal["url", "manual"]
     url: str | None = Field(default=None, max_length=8192)
     refresh_interval_seconds: int = Field(default=3600, ge=60, le=604800)
+    ignored_node_names: IgnoredNodeNames = Field(
+        default_factory=list, description="按原节点名称精确匹配忽略，刷新后仍生效；同名节点全部忽略"
+    )
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -47,6 +53,7 @@ class SourcePatch(InputModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     url: str | None = Field(default=None, max_length=8192)
     refresh_interval_seconds: int | None = Field(default=None, ge=60, le=604800)
+    ignored_node_names: IgnoredNodeNames | None = None
 
 
 class NodeInput(InputModel):
@@ -79,6 +86,7 @@ class ExportConfig(InputModel):
     template_yaml: str | None = Field(default=None, max_length=10 * 1024 * 1024)
     base_source_id: str | None = None
     injection: Literal["grouped", "direct"] = "grouped"
+    prefix_source_name: bool = Field(default=True, description="是否为节点名称添加 [来源名] 前缀")
     target_groups: list[str] = Field(default_factory=lambda: ["代理选择"], min_length=1)
 
     @model_validator(mode="after")
@@ -114,6 +122,7 @@ class ExportPatch(InputModel):
     template_yaml: str | None = Field(default=None, max_length=10 * 1024 * 1024)
     base_source_id: str | None = None
     injection: Literal["grouped", "direct"] | None = None
+    prefix_source_name: bool | None = None
     target_groups: list[str] | None = None
 
 
@@ -127,6 +136,7 @@ class SourceView(BaseModel):
     kind: Literal["url", "manual"]
     url: str | None
     refresh_interval_seconds: int
+    ignored_node_names: list[str]
     created_at: str
     last_attempt_at: str | None
     last_success_at: str | None
@@ -135,6 +145,7 @@ class SourceView(BaseModel):
     using_stale_snapshot: bool
     status: Literal["pending", "ready", "error"]
     node_count: int
+    ignored_node_count: int
     has_snapshot: bool
 
 

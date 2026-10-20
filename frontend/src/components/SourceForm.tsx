@@ -28,6 +28,7 @@ export default function SourceForm({
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [minutes, setMinutes] = useState('60')
+  const [ignoredNames, setIgnoredNames] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
@@ -37,6 +38,7 @@ export default function SourceForm({
     setName(source?.name ?? '')
     setUrl(source?.url ?? '')
     setMinutes(String(Math.round((source?.refresh_interval_seconds ?? 3600) / 60)))
+    setIgnoredNames((source?.ignored_node_names ?? []).join('\n'))
     setError(null)
   }, [open, source])
 
@@ -52,8 +54,12 @@ export default function SourceForm({
     setError(null)
     try {
       let saved: Source
+      const ignored_node_names = [...new Set(ignoredNames.split(/\r?\n/).filter((name) => name.trim()))]
       if (editing) {
         const patch: Record<string, unknown> = {}
+        if (JSON.stringify(ignored_node_names) !== JSON.stringify(source.ignored_node_names)) {
+          patch.ignored_node_names = ignored_node_names
+        }
         if (name.trim() !== source.name) patch.name = name.trim()
         if (source.kind === 'url') {
           if (url.trim() !== source.url) patch.url = url.trim()
@@ -63,8 +69,8 @@ export default function SourceForm({
       } else {
         saved = await api.createSource(
           kind === 'url'
-            ? { name: name.trim(), kind, url: url.trim(), refresh_interval_seconds: seconds }
-            : { name: name.trim(), kind },
+            ? { name: name.trim(), kind, url: url.trim(), refresh_interval_seconds: seconds, ignored_node_names }
+            : { name: name.trim(), kind, ignored_node_names },
         )
       }
       onSaved(saved)
@@ -132,7 +138,7 @@ export default function SourceForm({
             autoFocus
           />
           <span className="hint" style={nameInvalid ? { color: 'var(--red)' } : undefined}>
-            名称会作为节点前缀 <code>[名称] 节点名</code>，不能包含逗号或换行。
+            出口开启来源前缀时，节点名为 <code>[名称] 节点名</code>。名称不能包含逗号或换行。
           </span>
         </div>
         {kind === 'url' && (
@@ -186,6 +192,20 @@ export default function SourceForm({
             </div>
           </>
         )}
+        <div className="field">
+          <label className="label" htmlFor="src-ignored-names">忽略节点</label>
+          <textarea
+            id="src-ignored-names"
+            className="textarea"
+            rows={4}
+            value={ignoredNames}
+            onChange={(e) => setIgnoredNames(e.target.value)}
+            placeholder={'每行一个原节点名称\n例如：剩余流量'}
+          />
+          <span className="hint">
+            按完整原名称精确匹配，同名节点全部忽略。对所有引用此来源的出口生效，刷新后仍保留；清空可全部恢复。
+          </span>
+        </div>
         <ErrorNote error={error} />
       </form>
     </Modal>

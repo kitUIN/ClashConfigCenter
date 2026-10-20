@@ -124,6 +124,7 @@ export default function ExportDetail() {
           template_yaml: e.mode === 'template' ? e.template_yaml : null,
           base_source_id: e.mode === 'inherit' ? e.base_source_id : null,
           injection: e.injection,
+          prefix_source_name: e.prefix_source_name,
           target_groups: e.target_groups,
         }),
       )
@@ -334,7 +335,9 @@ export default function ExportDetail() {
                           <span className="grow truncate item-title">{s?.name ?? sid}</span>
                           {e.base_source_id === sid && <span className="badge badge-blue">基础</span>}
                           {srcErrors.has(sid) && <span className="badge badge-amber">拉取失败</span>}
-                          <span className="xs subtle">{s ? `${s.node_count} 节点` : ''}</span>
+                          <span className="xs subtle">
+                            {s ? `${s.node_count - s.ignored_node_count} 节点` : ''}
+                          </span>
                           {s && <StatusDot status={s.status} label="" />}
                         </Link>
                       )
@@ -356,6 +359,10 @@ export default function ExportDetail() {
                       <div>
                         <dt>注入方式</dt>
                         <dd>{e.injection === 'grouped' ? '按来源分组' : '直接注入'}</dd>
+                      </div>
+                      <div>
+                        <dt>来源分组前缀</dt>
+                        <dd>{e.prefix_source_name ? '开启' : '关闭'}</dd>
                       </div>
                       {e.mode === 'inherit' && (
                         <div style={{ gridColumn: '1 / -1' }}>

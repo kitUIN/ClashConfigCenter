@@ -27,6 +27,7 @@ class Source(Base):
     kind: Mapped[str] = mapped_column(String(20))
     url: Mapped[str | None] = mapped_column(Text)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    ignored_node_names: Mapped[list[str]] = mapped_column(JSON, default=list)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
     last_attempt_at: Mapped[float | None] = mapped_column(Float)
@@ -66,6 +67,7 @@ class Export(Base):
         ForeignKey("sources.id", ondelete="RESTRICT")
     )
     injection: Mapped[str] = mapped_column(String(20))
+    prefix_source_name: Mapped[bool] = mapped_column(Boolean, default=True)
     target_groups: Mapped[list[str]] = mapped_column(JSON)
     token_hash: Mapped[str] = mapped_column(String(64))
     # 明文订阅 Token，供管理端随时查看/复制；旧版本创建的出口为空，需更换一次 Token。

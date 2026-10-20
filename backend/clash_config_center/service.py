@@ -63,6 +63,7 @@ class Service:
 
     async def source_view(self, session: AsyncSession, source: Source) -> dict:
         snapshot = await session.get(SourceSnapshot, source.id)
+        ignored = set(source.ignored_node_names)
         stale = bool(snapshot and (source.last_error or snapshot.revision != source.revision))
         return {
             "id": source.id,
@@ -70,6 +71,7 @@ class Service:
             "kind": source.kind,
             "url": source.url,
             "refresh_interval_seconds": source.refresh_interval_seconds,
+            "ignored_node_names": source.ignored_node_names,
             "created_at": timestamp(source.created_at),
             "last_attempt_at": timestamp(source.last_attempt_at),
             "last_success_at": timestamp(source.last_success_at),
@@ -78,6 +80,9 @@ class Service:
             "using_stale_snapshot": stale,
             "status": "error" if source.last_error else ("ready" if snapshot else "pending"),
             "node_count": len(snapshot.nodes) if snapshot else 0,
+            "ignored_node_count": (
+                sum(node["name"] in ignored for node in snapshot.nodes) if snapshot else 0
+            ),
             "has_snapshot": snapshot is not None,
         }
 
@@ -320,6 +325,7 @@ class Service:
                     snapshot.nodes,
                     snapshot.document,
                     snapshot.version,
+                    ignored_node_names=source.ignored_node_names,
                 )
             )
         return await asyncio.to_thread(compile_export, config, sources)

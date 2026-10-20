@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
@@ -62,14 +62,14 @@ def _materialize_groups(groups: list[dict], nodes: list[dict]) -> None:
         if not refs and (automatic or excludes):
             refs = [group.get("empty-fallback", "COMPATIBLE")]
         group["proxies"] = refs
-        for field in (
+        for key in (
             "include-all",
             "include-all-proxies",
             "include-all-providers",
             "filter",
             "exclude-filter",
         ):
-            group.pop(field, None)
+            group.pop(key, None)
 
 
 @dataclass
@@ -80,6 +80,7 @@ class SourceContent:
     nodes: list[dict[str, Any]]
     document: dict[str, Any] | None
     version: str
+    ignored_node_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -112,7 +113,13 @@ def split_rule(rule: str) -> list[str]:
     return result
 
 
-def _rewrite_rules(document: dict, mapping: dict[str, str]) -> None:
+def _rewrite_reference(name: str, mapping: dict[str, str], ignored: set[str]) -> str:
+    if name in ignored:
+        raise DomainError(f"配置仍引用已忽略的节点「{name}」，请调整引用或恢复该节点")
+    return mapping.get(name, name)
+
+
+def _rewrite_rules(document: dict, mapping: dict[str, str], ignored: set[str]) -> None:
     rules = document.get("rules")
     if not isinstance(rules, list) or not rules:
         raise DomainError("完整配置必须包含非空 rules 列表")
@@ -136,16 +143,18 @@ def _rewrite_rules(document: dict, mapping: dict[str, str]) -> None:
             elif len(parts) not in (3, 4) or (len(parts) == 4 and parts[-1] != "no-resolve"):
                 raise DomainError("分流规则参数数量无效")
             if parts[0] != "SUB-RULE":
-                parts[target_index] = mapping.get(parts[target_index], parts[target_index])
+                parts[target_index] = _rewrite_reference(parts[target_index], mapping, ignored)
             rule_list[index] = ",".join(parts)
 
 
-def _rewrite_other_references(document: dict, mapping: dict[str, str]) -> None:
+def _rewrite_other_references(document: dict, mapping: dict[str, str], ignored: set[str]) -> None:
     # DNS server URLs can name a proxy after '#', alongside options separated by '&'.
     def rewrite_dns(value):
         if isinstance(value, str) and "#" in value:
             server, fragment = value.split("#", 1)
-            return server + "#" + "&".join(mapping.get(part, part) for part in fragment.split("&"))
+            return server + "#" + "&".join(
+                _rewrite_reference(part, mapping, ignored) for part in fragment.split("&")
+            )
         if isinstance(value, list):
             return [rewrite_dns(item) for item in value]
         if isinstance(value, dict):
@@ -158,7 +167,7 @@ def _rewrite_other_references(document: dict, mapping: dict[str, str]) -> None:
     if isinstance(providers, dict):
         for provider in providers.values():
             if isinstance(provider, dict) and isinstance(provider.get("proxy"), str):
-                provider["proxy"] = mapping.get(provider["proxy"], provider["proxy"])
+                provider["proxy"] = _rewrite_reference(provider["proxy"], mapping, ignored)
 
 
 def _validate_references(document: dict) -> None:
@@ -223,6 +232,14 @@ def _validate_references(document: dict) -> None:
 def compile_export(config: ExportConfig, sources: list[SourceContent]) -> Compiled:
     if [source.id for source in sources] != config.source_ids:
         raise DomainError("来源快照缺失或顺序不一致")
+    ignored_by_source = {
+        source.id: set(source.ignored_node_names) & {node["name"] for node in source.nodes}
+        for source in sources
+    }
+    selected_nodes = {
+        source.id: [node for node in source.nodes if node["name"] not in ignored_by_source[source.id]]
+        for source in sources
+    }
     if config.mode == "template":
         document = load_yaml(config.template_yaml or "")
         if not isinstance(document, dict):
@@ -254,8 +271,21 @@ def compile_export(config: ExportConfig, sources: list[SourceContent]) -> Compil
         if fallback is not None and (not isinstance(fallback, str) or not fallback):
             raise DomainError("empty-fallback 必须是名称字符串")
         reserved.add(name)
+    base_ignored = set()
     if base:
-        _materialize_groups(groups, base.nodes)
+        original_names = [node["name"] for node in base.nodes]
+        if len(set(original_names)) != len(original_names) or set(original_names) & reserved:
+            raise DomainError("基础配置的节点名称重复或与策略组/内置名称冲突，无法确定引用")
+        base_ignored = set(original_names) & ignored_by_source[base.id]
+        for group in groups:
+            if group.get("empty-fallback") in base_ignored:
+                group["empty-fallback"] = "COMPATIBLE"
+        _materialize_groups(groups, selected_nodes[base.id])
+        for group in groups:
+            refs = group["proxies"]
+            kept = [ref for ref in refs if ref not in base_ignored]
+            if len(kept) != len(refs):
+                group["proxies"] = kept or [group.get("empty-fallback", "COMPATIBLE")]
     groups_by_name = {group["name"]: group for group in groups}
     if any(name not in groups_by_name for name in config.target_groups):
         raise DomainError("接入目标策略组不存在")
@@ -272,18 +302,18 @@ def compile_export(config: ExportConfig, sources: list[SourceContent]) -> Compil
     base_mapping = {}
     for source in sources:
         current_nodes, mapping, duplicates = [], {}, set()
-        for node in source.nodes:
+        for node in selected_nodes[source.id]:
             current = copy.deepcopy(node)
             original = current["name"]
-            current["name"] = allocate(f"[{source.name}] {original}")
+            current["name"] = allocate(
+                f"[{source.name}] {original}" if config.prefix_source_name else original
+            )
             if original in mapping:
                 duplicates.add(original)
             else:
                 mapping[original] = current["name"]
             current_nodes.append(current)
         if base and source.id == base.id:
-            if duplicates or set(mapping) & (set(groups_by_name) | BUILTINS):
-                raise DomainError("基础配置的节点名称重复或与策略组/内置名称冲突，无法确定引用")
             base_mapping = mapping
         for node in current_nodes:
             dialer = node.get("dialer-proxy")
@@ -291,8 +321,10 @@ def compile_export(config: ExportConfig, sources: list[SourceContent]) -> Compil
                 raise DomainError("dialer-proxy 必须是名称字符串")
             if dialer in duplicates:
                 raise DomainError("dialer-proxy 引用的节点名称不唯一")
-            if dialer in mapping:
-                node["dialer-proxy"] = mapping[dialer]
+            if dialer is not None:
+                node["dialer-proxy"] = _rewrite_reference(
+                    dialer, mapping, ignored_by_source[source.id]
+                )
         all_nodes.extend(current_nodes)
         if base and source.id == base.id:
             continue
@@ -319,9 +351,9 @@ def compile_export(config: ExportConfig, sources: list[SourceContent]) -> Compil
             fallback = group.get("empty-fallback")
             if isinstance(fallback, str):
                 group["empty-fallback"] = base_mapping.get(fallback, fallback)
-    _rewrite_rules(document, base_mapping)
-    if base_mapping:
-        _rewrite_other_references(document, base_mapping)
+    _rewrite_rules(document, base_mapping, base_ignored)
+    if base:
+        _rewrite_other_references(document, base_mapping, base_ignored)
     for name in config.target_groups:
         group = groups_by_name[name]
         refs = group.setdefault("proxies", [])

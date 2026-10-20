@@ -32,12 +32,14 @@ def sources():
 
 @pytest.mark.parametrize("mode", ["template", "inherit"])
 @pytest.mark.parametrize("injection", ["grouped", "direct"])
-def test_modes_and_injection(mode, injection):
+@pytest.mark.parametrize("prefix", [True, False])
+def test_modes_and_injection(mode, injection, prefix):
     config = ExportConfig(
         name="test",
         source_ids=["a", "b"],
         mode=mode,
         injection=injection,
+        prefix_source_name=prefix,
         base_source_id="a" if mode == "inherit" else None,
         target_groups=["主选择"] if mode == "inherit" else ["代理选择"],
     )
@@ -47,15 +49,142 @@ def test_modes_and_injection(mode, injection):
     assert len({n["name"] for n in doc["proxies"]}) == 3
     assert result.yaml_content == compile_export(config, sources()).yaml_content
     group = doc["proxy-groups"][0]
+    assert doc["proxies"][0]["name"] == ("[机场] 香港01" if prefix else "香港01")
     if mode == "inherit":
         assert doc["dns"] == sources()[0].document["dns"]
-        assert doc["rules"][0] == "DOMAIN,example.com,[机场] 香港01"
-        assert group["proxies"][0] == "[机场] 香港01"
+        assert doc["rules"][0] == f"DOMAIN,example.com,{doc['proxies'][0]['name']}"
+        assert group["proxies"][0] == doc["proxies"][0]["name"]
         assert doc["rules"][2].endswith("DIRECT,no-resolve")
     if injection == "grouped":
         assert any(value.startswith("来源 ·") for value in group["proxies"])
     else:
         assert any(value.endswith("#3") for value in group["proxies"])
+
+
+def test_unprefixed_inherited_references_follow_allocated_names():
+    current = sources()[::-1]
+    current[1].nodes = [SS_NODE, {**SS_NODE, "name": "拨号", "dialer-proxy": "香港01"}]
+    current[1].document["dns"] = {"nameserver": ["https://dns.example/#香港01"]}
+    current[1].document["rule-providers"] = {"test": {"proxy": "香港01"}}
+    config = ExportConfig(
+        name="x",
+        source_ids=["b", "a"],
+        mode="inherit",
+        base_source_id="a",
+        target_groups=["主选择"],
+        prefix_source_name=False,
+    )
+    result = yaml.safe_load(compile_export(config, current).yaml_content)
+    assert result["proxies"][2]["name"] == "香港01 #3"
+    assert result["proxies"][3]["dialer-proxy"] == "香港01 #3"
+    assert result["rules"][0] == "DOMAIN,example.com,香港01 #3"
+    assert result["proxy-groups"][0]["proxies"][0] == "香港01 #3"
+    assert result["dns"]["nameserver"] == ["https://dns.example/#香港01 #3"]
+    assert result["rule-providers"]["test"]["proxy"] == "香港01 #3"
+
+
+@pytest.mark.parametrize("prefix", [True, False])
+@pytest.mark.parametrize("injection", ["grouped", "direct"])
+def test_ignored_nodes_are_source_scoped_and_do_not_mutate_snapshots(prefix, injection):
+    current = sources()
+    current[1].ignored_node_names = ["香港01", "尚未出现"]
+    original = copy.deepcopy(current)
+    config = ExportConfig(
+        name="x",
+        source_ids=["a", "b"],
+        prefix_source_name=prefix,
+        injection=injection,
+    )
+    result = compile_export(config, current)
+    doc = yaml.safe_load(result.yaml_content)
+    assert result.node_count == 1
+    assert doc["proxies"][0]["type"] == "ss"
+    assert result.group_count == (2 if injection == "grouped" else 1)
+    assert current == original
+    current[0].ignored_node_names = ["香港01"]
+    with pytest.raises(DomainError, match="至少需要一个节点"):
+        compile_export(config, current)
+
+
+@pytest.mark.parametrize("prefix", [True, False])
+def test_ignored_base_nodes_removed_from_explicit_automatic_and_fallback_groups(prefix):
+    current = sources()
+    current[0].nodes = [SS_NODE, {**SS_NODE, "name": "日本01"}]
+    current[0].ignored_node_names = ["香港01"]
+    current[0].document["rules"] = ["MATCH,主选择"]
+    current[0].document["proxy-groups"] = [
+        {"name": "主选择", "type": "select", "proxies": ["香港01", "日本01"]},
+        {"name": "空组", "type": "select", "proxies": ["香港01"]},
+        {"name": "自动", "type": "select", "include-all-proxies": True},
+        {
+            "name": "备用",
+            "type": "select",
+            "include-all": True,
+            "filter": "^香港",
+            "empty-fallback": "香港01",
+        },
+    ]
+    config = ExportConfig(
+        name="x",
+        source_ids=["a", "b"],
+        mode="inherit",
+        base_source_id="a",
+        target_groups=["主选择"],
+        prefix_source_name=prefix,
+    )
+    doc = yaml.safe_load(compile_export(config, current).yaml_content)
+    groups = {g["name"]: g for g in doc["proxy-groups"]}
+    assert groups["主选择"]["proxies"][0] == doc["proxies"][0]["name"]
+    assert groups["空组"]["proxies"] == ["COMPATIBLE"]
+    assert groups["自动"]["proxies"] == [doc["proxies"][0]["name"]]
+    assert groups["备用"]["proxies"] == ["COMPATIBLE"]
+    assert groups["备用"]["empty-fallback"] == "COMPATIBLE"
+    assert [node["type"] for node in doc["proxies"]] == ["ss", "vless", "vless"]
+    # Even when every base node is ignored, surviving groups can receive other sources.
+    current[0].ignored_node_names.append("日本01")
+    assert compile_export(config, current).node_count == 2
+
+
+@pytest.mark.parametrize("reference", ["rule", "sub-rule", "dns", "provider", "dialer"])
+def test_ignored_node_dependencies_fail_instead_of_binding_another_source(reference):
+    current = sources()
+    current[0].nodes = [SS_NODE, {**SS_NODE, "name": "保留"}]
+    current[0].ignored_node_names = ["香港01"]
+    document = current[0].document
+    document["rules"] = ["MATCH,主选择"]
+    if reference == "rule":
+        document["rules"] = ["MATCH,香港01"]
+    elif reference == "sub-rule":
+        document["rules"] = ["SUB-RULE,(NETWORK,TCP),tcp", "MATCH,主选择"]
+        document["sub-rules"] = {"tcp": ["MATCH,香港01"]}
+    elif reference == "dns":
+        document["dns"] = {"nameserver": ["https://dns.example/#香港01&h3=true"]}
+    elif reference == "provider":
+        document["rule-providers"] = {"remote": {"proxy": "香港01"}}
+    else:
+        current[0].nodes[1]["dialer-proxy"] = "香港01"
+    config = ExportConfig(
+        name="x",
+        source_ids=["a", "b"],
+        mode="inherit",
+        base_source_id="a",
+        target_groups=["主选择"],
+        prefix_source_name=False,
+    )
+    with pytest.raises(DomainError, match="已忽略的节点"):
+        compile_export(config, current)
+
+
+@pytest.mark.parametrize("dialer", ["DIRECT", "拨号选择"])
+def test_unmatched_ignored_names_do_not_block_group_or_builtin_dialers(dialer):
+    current = sources()[:1]
+    current[0].ignored_node_names = [dialer]
+    current[0].nodes = [{**SS_NODE, "dialer-proxy": dialer}]
+    template = yaml.safe_load(DEFAULT_TEMPLATE)
+    template["proxy-groups"].append({"name": "拨号选择", "type": "select", "proxies": ["DIRECT"]})
+    config = ExportConfig(name="x", source_ids=["a"], template_yaml=yaml.safe_dump(template))
+    result = yaml.safe_load(compile_export(config, current).yaml_content)
+    assert result["proxies"][0]["dialer-proxy"] == dialer
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,122 @@ from clash_config_center.models import Export, ExportSnapshot, Source, SystemSet
 from clash_config_center.security import token_digest
 
 
+@pytest.mark.parametrize("kind", ["manual", "url"])
+async def test_source_ignores_rebuild_exports_and_survive_refresh_and_restart(harness, kind):
+    h = harness
+    response = await h.client.post(
+        "/api/v1/sources",
+        json={
+            "name": "过滤来源",
+            "kind": kind,
+            "url": "https://upstream.test/a" if kind == "url" else None,
+            "ignored_node_names": ["香港01"],
+        },
+    )
+    assert response.status_code == 201
+    source = response.json()
+    sid = source["id"]
+    keep = {**SS_NODE, "name": "保留"}
+    if kind == "url":
+        h.upstream["/a"] = {"proxies": [SS_NODE, SS_NODE, keep]}
+        await h.refresh(sid)
+    else:
+        for node in (SS_NODE, SS_NODE, keep):
+            await h.add(sid, node)
+    source = (await h.client.get(f"/api/v1/sources/{sid}")).json()
+    assert source["node_count"] == 3 and source["ignored_node_count"] == 2
+    assert len((await h.client.get(f"/api/v1/sources/{sid}/nodes")).json()) == 3
+    export = await h.export([sid], prefix_source_name=False)
+    assert export["prefix_source_name"] is False
+    doc = yaml.safe_load((await h.client.get(export["subscription_url"])).text)
+    assert [n["name"] for n in doc["proxies"]] == ["保留"]
+    second_export = await h.export([sid])
+    assert second_export["prefix_source_name"] is True
+
+    restored = await h.client.patch(f"/api/v1/sources/{sid}", json={"ignored_node_names": []})
+    assert restored.status_code == 200 and restored.json()["ignored_node_count"] == 0
+    for item in (export, second_export):
+        assert (
+            len(yaml.safe_load((await h.client.get(item["subscription_url"])).text)["proxies"]) == 3
+        )
+    response = await h.client.patch(
+        f"/api/v1/sources/{sid}", json={"ignored_node_names": ["香港01"]}
+    )
+    assert response.status_code == 200
+    if kind == "url":
+        h.upstream["/a"]["proxies"].reverse()
+        refreshed = await h.refresh(sid)
+        assert refreshed["ignored_node_count"] == 2
+        h.upstream["/a"] = 503
+        assert (await h.refresh(sid))["using_stale_snapshot"]
+    else:
+        await h.add(sid, SS_NODE)
+    preview = await h.client.post(
+        "/api/v1/exports/preview",
+        json={"name": "预览", "source_ids": [sid], "prefix_source_name": False},
+    )
+    assert preview.status_code == 200 and preview.json()["node_count"] == 1
+    assert preview.json()["yaml"] == (await h.client.get(export["subscription_url"])).text
+    # A new app instance reads persisted options and the same published subscription.
+    app = create_app(h.settings, transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {h.admin_token}"},
+        ) as client:
+            assert (await client.get(f"/api/v1/sources/{sid}")).json()["ignored_node_names"] == [
+                "香港01"
+            ]
+            assert (await client.get(f"/api/v1/exports/{export['id']}")).json()[
+                "prefix_source_name"
+            ] is False
+            assert (
+                len(yaml.safe_load((await client.get(export["subscription_url"])).text)["proxies"])
+                == 1
+            )
+
+
+async def test_prefix_patch_and_invalid_ignore_keep_previous_output(harness):
+    h = harness
+    source = await h.source()
+    sid = source["id"]
+    assert source["ignored_node_names"] == [] and source["ignored_node_count"] == 0
+    await h.add(sid)
+    export = await h.export([sid])
+    initial = await h.client.get(export["subscription_url"])
+    response = await h.client.patch(
+        f"/api/v1/exports/{export['id']}", json={"prefix_source_name": False}
+    )
+    assert response.status_code == 200 and response.json()["prefix_source_name"] is False
+    changed = await h.client.get(export["subscription_url"])
+    assert changed.headers["etag"] != initial.headers["etag"]
+    assert yaml.safe_load(changed.text)["proxies"][0]["name"] == "香港01"
+    response = await h.client.patch(
+        f"/api/v1/sources/{sid}", json={"ignored_node_names": ["香港01"]}
+    )
+    assert response.status_code == 200
+    state = (await h.client.get(f"/api/v1/exports/{export['id']}")).json()
+    assert state["using_stale_snapshot"] and "至少需要一个节点" in state["last_error"]
+    assert (await h.client.get(export["subscription_url"])).text == changed.text
+    for invalid in (None, "香港01", [1], [""]):
+        response = await h.client.patch(
+            f"/api/v1/sources/{sid}", json={"ignored_node_names": invalid}
+        )
+        assert response.status_code == 422
+    assert (
+        await h.client.patch(f"/api/v1/exports/{export['id']}", json={"prefix_source_name": None})
+    ).status_code == 422
+    await h.client.patch(f"/api/v1/sources/{sid}", json={"ignored_node_names": []})
+    restored = (await h.client.get(f"/api/v1/exports/{export['id']}")).json()
+    assert restored["last_error"] is None and not restored["using_stale_snapshot"]
+    response = await h.client.patch(
+        f"/api/v1/exports/{export['id']}", json={"prefix_source_name": True}
+    )
+    assert response.status_code == 200
+    assert (await h.client.get(export["subscription_url"])).text == initial.text
+
+
 async def test_auth_initialization_persistence_and_reset(harness, capsys):
     h = harness
     assert (await h.client.get("/api/v1/auth/check")).json() == {"authenticated": True}

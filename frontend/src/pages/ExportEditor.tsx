@@ -71,6 +71,7 @@ interface Draft {
   template_yaml: string
   base_source_id: string
   injection: Injection
+  prefix_source_name: boolean
   target_groups: string[]
   token: string
 }
@@ -84,6 +85,7 @@ function fromExport(e: ExportView): Draft {
     template_yaml: e.template_yaml ?? DEFAULT_TEMPLATE,
     base_source_id: e.base_source_id ?? '',
     injection: e.injection,
+    prefix_source_name: e.prefix_source_name,
     target_groups: e.target_groups,
     token: '',
   }
@@ -97,6 +99,7 @@ const NEW_DRAFT: Draft = {
   template_yaml: DEFAULT_TEMPLATE,
   base_source_id: '',
   injection: 'grouped',
+  prefix_source_name: true,
   target_groups: ['代理选择'],
   token: '',
 }
@@ -110,6 +113,7 @@ function toConfig(d: Draft): ExportConfig {
     template_yaml: d.mode === 'template' ? d.template_yaml : null,
     base_source_id: d.mode === 'inherit' ? d.base_source_id || null : null,
     injection: d.injection,
+    prefix_source_name: d.prefix_source_name,
     target_groups: d.target_groups,
   }
 }
@@ -349,7 +353,7 @@ export default function ExportEditor() {
                 <section className="card">
                   <div className="card-header">
                     <h3 className="card-title">来源</h3>
-                    <p className="card-desc">顺序决定节点输出顺序。节点按「[来源名称] 原节点名」命名。</p>
+                    <p className="card-desc">顺序决定节点输出顺序。各来源中已忽略的节点不会注入出口。</p>
                   </div>
                   <div className="card-body stack" style={{ gap: 16 }}>
                     {selected.length === 0 ? (
@@ -366,7 +370,9 @@ export default function ExportEditor() {
                             {draft.mode === 'inherit' && draft.base_source_id === s.id && (
                               <span className="badge badge-blue">基础</span>
                             )}
-                            <span className="xs subtle hide-sm">{s.node_count} 节点</span>
+                            <span className="xs subtle hide-sm">
+                              {s.node_count - s.ignored_node_count} 节点
+                            </span>
                             <StatusDot status={s.status} label="" />
                             <IconButton label="上移" small disabled={i === 0} onClick={() => moveSource(i, -1)}>
                               <IconArrowUp />
@@ -398,7 +404,7 @@ export default function ExportEditor() {
                           {available.map((s) => (
                             <Button key={s.id} size="sm" icon={<IconPlus />} onClick={() => addSource(s.id)}>
                               {s.name}
-                              <span className="subtle xs">{s.node_count}</span>
+                              <span className="subtle xs">{s.node_count - s.ignored_node_count}</span>
                             </Button>
                           ))}
                         </div>
@@ -492,6 +498,20 @@ export default function ExportEditor() {
                     <h3 className="card-title">节点注入</h3>
                   </div>
                   <div className="card-body stack" style={{ gap: 16 }}>
+                    <div className="field">
+                      <label className="row small" style={{ cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          className="check"
+                          checked={draft.prefix_source_name}
+                          onChange={(e) => set('prefix_source_name', e.target.checked)}
+                        />
+                        是否产生来源分组前缀
+                      </label>
+                      <span className="hint">
+                        开启后节点名为「[来源名称] 原节点名」；关闭后保留原节点名，重名时追加编号。
+                      </span>
+                    </div>
                     <div className="choice-grid">
                       <Choice
                         on={draft.injection === 'grouped'}

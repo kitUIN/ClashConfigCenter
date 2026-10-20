@@ -52,9 +52,11 @@ export default function SourceDetail() {
   const [viewing, setViewing] = useState<NodeView>()
   const [query, setQuery] = useState('')
   const [reordering, setReordering] = useState(false)
+  const [ignoring, setIgnoring] = useState(false)
 
   const s = source.data
   const isManual = s?.kind === 'manual'
+  const ignoredNames = useMemo(() => new Set(s?.ignored_node_names ?? []), [s?.ignored_node_names])
   const usedBy = useMemo(
     () => (exports.data ?? []).filter((e) => e.source_ids.includes(id)),
     [exports.data, id],
@@ -84,6 +86,27 @@ export default function SourceDetail() {
     nodes.setData(list)
     // 节点修改会刷新来源快照并触发出口重编译，重新获取来源状态
     void source.reload()
+    void exports.reload()
+  }
+
+  async function toggleIgnored(name: string) {
+    if (!s || ignoring) return
+    setIgnoring(true)
+    const ignored = ignoredNames.has(name)
+    try {
+      const next = await api.patchSource(id, {
+        ignored_node_names: ignored
+          ? s.ignored_node_names.filter((value) => value !== name)
+          : [...s.ignored_node_names, name],
+      })
+      source.setData(next)
+      await exports.reload()
+      toast.success(ignored ? '已恢复该名称的节点' : '已保存忽略设置')
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setIgnoring(false)
+    }
   }
 
   async function refresh() {
@@ -93,6 +116,7 @@ export default function SourceDetail() {
       const next = await api.refreshSource(s.id)
       source.setData(next)
       await nodes.reload()
+      await exports.reload()
       if (next.last_error) toast.error(`刷新失败：${next.last_error}`)
       else toast.success(`已刷新，${next.node_count} 个节点`)
     } catch (e) {
@@ -167,7 +191,7 @@ export default function SourceDetail() {
                   立即刷新
                 </Button>
               )}
-              <Button icon={<IconEdit />} onClick={() => setEditingSource(true)}>
+              <Button icon={<IconEdit />} disabled={ignoring} onClick={() => setEditingSource(true)}>
                 编辑
               </Button>
               {isManual && (
@@ -201,6 +225,12 @@ export default function SourceDetail() {
               等待首次拉取。后台调度器会在下一次检查时拉取，也可以点击「立即刷新」。
             </Note>
           )}
+          {usedBy.filter((e) => e.last_error).map((e) => (
+            <Note key={e.id} type="warning">
+              <Link to={`/exports/${e.id}`} style={{ textDecoration: 'underline' }}>{e.name}</Link>
+              {' '}重新生成失败：{e.last_error}。订阅仍提供上次成功结果，可能包含已忽略的节点。
+            </Note>
+          ))}
 
           <div className="card">
             <div className="card-body">
@@ -217,7 +247,11 @@ export default function SourceDetail() {
                   )}
                   <div>
                     <dt>节点数</dt>
-                    <dd>{s.node_count}</dd>
+                    <dd>{s.node_count - s.ignored_node_count} 可用 / {s.node_count} 总计</dd>
+                  </div>
+                  <div>
+                    <dt>已忽略</dt>
+                    <dd>{s.ignored_node_count} 个节点</dd>
                   </div>
                   {s.kind === 'url' && (
                     <>
@@ -274,7 +308,8 @@ export default function SourceDetail() {
                 <p className="small muted" style={{ margin: '2px 0 0' }}>
                   {isManual
                     ? '自定义节点可编辑、删除和排序，顺序决定输出顺序。'
-                    : 'URL 来源节点来自最近一次成功的快照，只读。'}
+                    : 'URL 来源节点来自最近一次成功的快照。'}
+                  {' '}可按原名称忽略或恢复节点，同名节点一起生效，刷新后仍保留设置。
                 </p>
               </div>
               <div className="row row-wrap">
@@ -343,10 +378,11 @@ export default function SourceDetail() {
                   <span className="hide-sm" style={{ width: 220 }}>
                     服务器
                   </span>
-                  <span style={{ width: isManual ? 148 : 32 }} />
+                  <span style={{ width: isManual ? 208 : 92 }} />
                 </div>
                 {filtered.map((n) => {
                   const index = (nodes.data ?? []).indexOf(n)
+                  const ignored = ignoredNames.has(String(n.config.name))
                   return (
                     <div
                       key={n.id ?? `p-${n.position}`}
@@ -361,6 +397,7 @@ export default function SourceDetail() {
                         <span className="truncate item-title">
                           {String(n.config.name ?? '(未命名)')}
                         </span>
+                        {ignored && <span className="badge badge-amber">已忽略</span>}
                       </div>
                       <span
                         className="hide-sm mono small muted truncate"
@@ -370,6 +407,15 @@ export default function SourceDetail() {
                         {n.config.port !== undefined ? `:${n.config.port}` : ''}
                       </span>
                       <div className="row" style={{ gap: 2 }}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={!s || ignoring || editingSource}
+                          aria-label={`${ignored ? '恢复' : '忽略'}节点 ${String(n.config.name)}`}
+                          onClick={() => toggleIgnored(String(n.config.name))}
+                        >
+                          {ignored ? '恢复' : '忽略'}
+                        </Button>
                         <IconButton label="查看配置" small onClick={() => setViewing(n)}>
                           <IconEye />
                         </IconButton>
@@ -440,6 +486,7 @@ export default function SourceDetail() {
           onClose={() => setEditingSource(false)}
           onSaved={(next) => {
             source.setData(next)
+            void exports.reload()
             toast.success('已保存')
           }}
         />
